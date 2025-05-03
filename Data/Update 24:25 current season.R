@@ -52,5 +52,6 @@ results_list$season_2425 <- bind_rows(results_list$season_2425, new_rows)
 rm(list = setdiff(ls(), "results_list"))
 
 # Save updated object
-save(results_list, file = "results_list.RData")
+save(results_list, file = "Data/results_list.RData")
+
 
