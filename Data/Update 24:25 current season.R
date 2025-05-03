@@ -54,14 +54,3 @@ rm(list = setdiff(ls(), "results_list"))
 # Save updated object
 save(results_list, file = "results_list.RData")
 
-# Set the Git repository path (modify this if it's not the current directory)
-repo_path <- getwd()  # Assumes you're already in the Git repo folder
-
-# Commit changes with a custom message
-commit_message <- "Update results_list with new data"
-system(paste("git -C", repo_path, "add ."))  # Add all changes
-system(paste("git -C", repo_path, "commit -m", shQuote(commit_message)))  # Commit changes
-
-# Push changes to the remote repository
-system(paste("git -C", repo_path, "push"))
-
