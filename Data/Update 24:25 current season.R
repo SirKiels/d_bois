@@ -5,6 +5,7 @@ library(tidyverse)
 library(rvest)
 library(purrr)
 library(lubridate)
+library(jsonlite)
 
 # Source functions from GitHub
 source("https://raw.githubusercontent.com/SirKiels/d_bois/main/Functions/Functions.R")
@@ -53,7 +54,13 @@ results_list$season_2425 <- bind_rows(results_list$season_2425, new_rows)
 # Cleanup: remove everything except for "results_list"
 rm(list = setdiff(ls(), "results_list"))
 
-# Save updated object
-save(results_list, file = "Data/results_list.RData")
+# Convert and write the list
+json_text <- toJSON(results_list, pretty = TRUE, auto_unbox = TRUE)
+cat(json_text)  # Prints the JSON to the console
+
+# Write to file
+writeLines(json_text, "Data/results_list.json")
+
+#save(results_list, file = "Data/results_list.RData")
 
 
