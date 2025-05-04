@@ -168,3 +168,67 @@ F8_drop_na_rows <- function(List_Name, Name_DF_in_list) {
   cleaned_list <- map(List_Name, ~ .x %>% filter(!is.na(.data[[Name_DF_in_list]])))
   return(cleaned_list)
 }
+
+F9_add_team_ranks <- function(matches) {
+  matches <- matches %>%
+    arrange(Date, Time) %>%
+    mutate(match_id = row_number())
+  
+  match_list <- vector("list", nrow(matches))
+  
+  for (i in seq_len(nrow(matches))) {
+    past_results <- matches[1:(i - 1), ]
+    
+    if (nrow(past_results) == 0) {
+      match_list[[i]] <- tibble(HomeRank = NA_integer_, AwayRank = NA_integer_)
+    } else {
+      long_results <- past_results %>%
+        select(HomeTeam, AwayTeam, FTHG, FTAG) %>%
+        mutate(
+          HomePoints = case_when(
+            FTHG > FTAG ~ 3,
+            FTHG == FTAG ~ 1,
+            TRUE ~ 0
+          ),
+          AwayPoints = case_when(
+            FTAG > FTHG ~ 3,
+            FTHG == FTAG ~ 1,
+            TRUE ~ 0
+          )
+        ) %>%
+        pivot_longer(cols = c(HomeTeam, AwayTeam),
+                     names_to = "Side", values_to = "Team") %>%
+        mutate(
+          GF = if_else(Side == "HomeTeam", FTHG, FTAG),
+          GA = if_else(Side == "HomeTeam", FTAG, FTHG),
+          Pts = if_else(Side == "HomeTeam", HomePoints, AwayPoints)
+        ) %>%
+        group_by(Team) %>%
+        summarise(
+          Pts = sum(Pts),
+          GD = sum(GF - GA),
+          GF = sum(GF),
+          .groups = "drop"
+        ) %>%
+        arrange(desc(Pts), desc(GD), desc(GF)) %>%
+        mutate(Rank = row_number())
+      
+      match_row <- matches[i, ]
+      home_rank <- long_results %>% filter(Team == match_row$HomeTeam) %>% pull(Rank)
+      away_rank <- long_results %>% filter(Team == match_row$AwayTeam) %>% pull(Rank)
+      
+      match_list[[i]] <- tibble(
+        HomeRank = ifelse(length(home_rank) == 0, NA_integer_, home_rank),
+        AwayRank = ifelse(length(away_rank) == 0, NA_integer_, away_rank)
+      )
+    }
+  }
+  
+  matches %>%
+    bind_cols(bind_rows(match_list)) %>%
+    select(-match_id) %>%
+    mutate(
+      HomeRank = if_else(row_number() == 1, NA, HomeRank), # first row should be NA
+      AwayRank = if_else(row_number() == 1, NA, AwayRank)
+    )
+}
