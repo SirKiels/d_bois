@@ -34,7 +34,9 @@ match_dates <- F6_scrape_match_dates_multiple_seasons("2024-2025", 34) |>
 latest_data <- left_join(
   latest_data, match_dates, 
   by = c("Date" = "scraped_date"),
-  relationship = "many-to-many")
+  relationship = "many-to-many") |> 
+  mutate(season = coalesce(season.y, season.x))  |> 
+  select(-season.x, -season.y)  # clean up
 
 # Drop rows with NA dates
 latest_data <- latest_data |> drop_na(Date)

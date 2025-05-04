@@ -9,6 +9,9 @@ library(lubridate)
 library(pointblank)
 library(skimmer)
 
+# Source functions from GitHub
+source("https://raw.githubusercontent.com/SirKiels/d_bois/main/Functions/Functions.R")
+
 # Import data sets
 # concatenate addresses for function
 {
