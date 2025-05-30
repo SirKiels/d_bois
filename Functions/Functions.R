@@ -232,3 +232,177 @@ F9_add_team_ranks <- function(matches) {
       AwayRank = if_else(row_number() == 1, NA, AwayRank)
     )
 }
+
+F10_plot_logistic_effect <- function(model, predictor, n_points = 100) {
+  # Extract original data from the model
+  model_data <- model$model
+  
+  # Create a sequence of values for the predictor
+  predictor_seq <- seq(
+    min(model_data[[predictor]], na.rm = TRUE),
+    max(model_data[[predictor]], na.rm = TRUE),
+    length.out = n_points
+  )
+  
+  # Build new data frame for prediction
+  new_data <- model_data[1, , drop = FALSE]  # clone structure
+  new_data <- new_data[rep(1, n_points), ]
+  new_data[[predictor]] <- predictor_seq
+  
+  # Zero out all other predictors if needed
+  for (var in names(new_data)) {
+    if (var != predictor) {
+      if (is.numeric(new_data[[var]])) {
+        new_data[[var]] <- mean(model_data[[var]], na.rm = TRUE)
+      } else if (is.factor(new_data[[var]])) {
+        new_data[[var]] <- levels(model_data[[var]])[1]
+      }
+    }
+  }
+  
+  # Get predicted probabilities
+  new_data$predicted_prob <- predict(model, newdata = new_data, type = "response")
+  
+  # Plot
+  ggplot(new_data, aes_string(x = predictor, y = "predicted_prob")) +
+    geom_line(color = "blue", size = 1) +
+    labs(
+      title = paste("Predicted Probability vs.", predictor),
+      x = predictor,
+      y = "Predicted Probability"
+    ) +
+    theme_minimal()
+}
+
+F11_table_ranks_per_game <- function(List_input = results_list[[1]]){
+  List_input |>
+    select(2, 4:8, 45:47, 122:123) |>  # keep essentials
+    arrange(Date) |>
+    mutate(GameID = row_number()) |>  # Add unique game ID for tracking
+    group_by(season) |>
+    group_modify(~ {
+      results <- .x
+      league_table <- tibble(Team = character(), Points = numeric(), GD = numeric(), GoalsFor = numeric(), Played = numeric())
+      
+      # Storage for ranks per match
+      home_ranks <- integer(nrow(results))
+      away_ranks <- integer(nrow(results))
+      
+      for (i in seq_len(nrow(results))) {
+        match <- results[i, ]
+        
+        # Calculate rank before this game
+        if (nrow(league_table) > 0) {
+          standings <- league_table |>
+            arrange(desc(Points), desc(GD), desc(GoalsFor)) |>
+            mutate(Rank = row_number())
+          
+          home_rank <- standings |> filter(Team == match$HomeTeam) |> pull(Rank)
+          away_rank <- standings |> filter(Team == match$AwayTeam) |> pull(Rank)
+          
+          home_ranks[i] <- ifelse(length(home_rank) == 0, NA_integer_, home_rank)
+          away_ranks[i] <- ifelse(length(away_rank) == 0, NA_integer_, away_rank)
+        } else {
+          home_ranks[i] <- NA_integer_
+          away_ranks[i] <- NA_integer_
+        }
+        
+        # Update league table after this game
+        home_team <- match$HomeTeam
+        away_team <- match$AwayTeam
+        FTHG <- match$FTHG
+        FTAG <- match$FTAG
+        
+        home_points <- if (FTHG > FTAG) 3 else if (FTHG == FTAG) 1 else 0
+        away_points <- if (FTAG > FTHG) 3 else if (FTHG == FTAG) 1 else 0
+        
+        update_team <- function(tbl, team, points, gf, ga) {
+          existing <- tbl |> filter(Team == team)
+          if (nrow(existing) == 0) {
+            tibble(Team = team, Points = points, GD = gf - ga, GoalsFor = gf, Played = 1)
+          } else {
+            tbl |> mutate(
+              Points = if_else(Team == team, Points + points, Points),
+              GD = if_else(Team == team, GD + (gf - ga), GD),
+              GoalsFor = if_else(Team == team, GoalsFor + gf, GoalsFor),
+              Played = if_else(Team == team, Played + 1, Played)
+            )
+          }
+        }
+        
+        league_table <- league_table |>
+          rows_upsert(update_team(league_table, home_team, home_points, FTHG, FTAG), by = "Team") |>
+          rows_upsert(update_team(league_table, away_team, away_points, FTAG, FTHG), by = "Team")
+      }
+      
+      # Add ranks to results
+      results |> mutate(
+        Draw_1_No_Draw_0 = case_when(FTR == "D" ~ 1, TRUE ~ 0),
+        HomeRank = home_ranks,
+        AwayRank = away_ranks,
+        Distance_Teams = sqrt((HomeRank - AwayRank)^2),
+        Distance_Teams_Higher_Lower = 
+          case_when(
+            HomeRank - AwayRank < 0 ~ "Home Higher",
+            HomeRank - AwayRank > 0 ~ "Away Higher",
+            TRUE ~ NA
+          ),
+        CategoriesRankHome = case_when(
+          home_ranks <= 3 ~ "Top3",
+          home_ranks >= 16 ~ "Bottom3",
+          home_ranks <= 9 & home_ranks >= 4 ~ "Middle4to9",
+          home_ranks <= 15 & home_ranks >= 10 ~ "Middle10to15",
+          TRUE        ~ NA
+        ),
+        CategoriesRankAway = case_when(
+          away_ranks <= 3 ~ "Top3",
+          away_ranks >= 16 ~ "Bottom3",
+          away_ranks <= 9 & away_ranks >= 4 ~ "Middle4to9",
+          away_ranks <= 15 & away_ranks >= 10 ~ "Middle10to15",
+          TRUE        ~ NA
+        )
+      )
+    }) |>
+    ungroup() |> 
+    arrange(GameID) |> 
+    select(-GameID)
+}
+
+F12_plot_random_effect_lines <- function(model, data, distance_var, group_var, 
+                                         num_points = 100, max_groups = NULL) {
+  # Limit to top N groups by frequency if requested
+  if (!is.null(max_groups)) {
+    top_groups <- data %>%
+      count(!!sym(group_var), sort = TRUE) %>%
+      slice_head(n = max_groups) %>%
+      pull(!!sym(group_var))
+  } else {
+    top_groups <- unique(data[[group_var]])
+  }
+  
+  # Generate prediction grid
+  distance_seq <- seq(min(data[[distance_var]], na.rm = TRUE),
+                      max(data[[distance_var]], na.rm = TRUE),
+                      length.out = num_points)
+  
+  newdata <- expand.grid(
+    distance = distance_seq,
+    group = top_groups
+  )
+  
+  # Rename columns to match model input
+  names(newdata) <- c(distance_var, group_var)
+  
+  # Predict
+  newdata$pred <- predict(model, newdata = newdata, type = "response", allow.new.levels = TRUE)
+  
+  # Plot
+  ggplot(newdata, aes_string(x = distance_var, y = "pred", color = group_var)) +
+    geom_line() +
+    labs(
+      x = distance_var,
+      y = "Predicted probability of draw",
+      color = group_var
+    ) +
+    theme_minimal()
+}
