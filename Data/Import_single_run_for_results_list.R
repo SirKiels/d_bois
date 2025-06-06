@@ -1,13 +1,8 @@
-# Todo:
-# Turn current season in run to update
-
 # Packages
 library(tidyverse)
 library(rvest)
 library(purrr)
 library(lubridate)
-library(pointblank)
-library(skimmer)
 
 # Source functions from GitHub
 source("https://raw.githubusercontent.com/SirKiels/d_bois/main/Functions/Functions.R")
@@ -117,17 +112,24 @@ seasons_25 <- c(
 )
 }
 num_rounds <- 34
-match_dates <- F6_scrape_match_dates_multiple_seasons(seasons_25, num_rounds)
-match_dates <- match_dates |>  as_tibble()
+match_dates <- F6_scrape_match_dates_multiple_seasons(seasons_25, num_rounds) |>
+  as_tibble() 
 
-match_dates <- match_dates |>
+# Dates
+match_dates <- match_dates |> 
   mutate(date = dmy(date)) |> 
   rename(scraped_date = date)
 
+# Turns out there's duplicates, so clean 'm
+match_dates <- match_dates  |> 
+  distinct(scraped_date, season, .keep_all = TRUE)
+
 # Merge over tables in list
 results_list <- 
-  map(results_list, ~ left_join(.x, match_dates, by = c("Date" = "scraped_date")))
-
+  map(results_list, ~ 
+  left_join(.x, match_dates, by = c("Date" = "scraped_date"))
+  )
+  
 # Quick column quality check
 QA_Date <- map_df(results_list, ~ summarise(.x, 
                                  min_date = min(Date, na.rm = TRUE),
