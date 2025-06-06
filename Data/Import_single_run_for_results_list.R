@@ -127,7 +127,8 @@ match_dates <- match_dates  |>
 # Merge over tables in list
 results_list <- 
   map(results_list, ~ 
-  left_join(.x, match_dates, by = c("Date" = "scraped_date"))
+  left_join(.x, match_dates, by = c("Date" = "scraped_date")) %>%
+  select(-Season) # not sure how this column snuck in here, but ok
   )
   
 # Quick column quality check
