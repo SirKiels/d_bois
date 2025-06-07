@@ -167,6 +167,14 @@ results_list <- F8_drop_na_rows(results_list, "Date")
 # Quick clean
 remove(num_rounds, seasons_25, match_dates, QA_Date)
 
+# Add unique id per row
+results_list <- results_list |> 
+  map(\(df) df |>
+    unite("UID", round, season, Date, HomeTeam, AwayTeam, sep = "", remove = FALSE) |>
+    mutate(UID = gsub("[- ]", "", UID)) |>
+    select(UID, everything())
+  )
+
 # Save as R object
 save(results_list, file = "results_list.RData")
 
