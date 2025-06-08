@@ -276,6 +276,7 @@ F10_plot_logistic_effect <- function(model, predictor, n_points = 100) {
 
 F11_table_ranks_per_game <- function(List_input = results_list[[1]]){
   List_input |>
+    select(-1) |> # Drop the new UID column
     select(2, 4:8, 45:47, 122:123) |>  # keep essentials
     arrange(Date) |>
     mutate(GameID = row_number()) |>  # Add unique game ID for tracking
@@ -330,9 +331,12 @@ F11_table_ranks_per_game <- function(List_input = results_list[[1]]){
           }
         }
         
-        league_table <- league_table |>
-          rows_upsert(update_team(league_table, home_team, home_points, FTHG, FTAG), by = "Team") |>
-          rows_upsert(update_team(league_table, away_team, away_points, FTAG, FTHG), by = "Team")
+        #league_table <- league_table |>
+        #  rows_upsert(update_team(league_table, home_team, home_points, FTHG, FTAG), by = "Team") |>
+        #  rows_upsert(update_team(league_table, away_team, away_points, FTAG, FTHG), by = "Team")
+        # Replaced with these:
+        league_table <- update_team(league_table, home_team, home_points, FTHG, FTAG)
+        league_table <- update_team(league_table, away_team, away_points, FTAG, FTHG)
       }
       
       # Add ranks to results
@@ -405,4 +409,204 @@ F12_plot_random_effect_lines <- function(model, data, distance_var, group_var,
       color = group_var
     ) +
     theme_minimal()
+}
+
+F13_table_ranks_pre_post_game <- function(List_input = results_list[[1]]) {
+  List_input |>
+    select(2, 4:8, 45:47, 122:123) |>  # keep essentials
+    arrange(Date) |>
+    mutate(GameID = row_number()) |>  # Add unique game ID for tracking
+    group_by(season) |>
+    group_modify(~ {
+      results <- .x
+      league_table <- tibble(Team = character(), Points = numeric(), GD = numeric(), GoalsFor = numeric(), Played = numeric())
+      
+      # Storage for ranks per match
+      home_ranks_pre <- integer(nrow(results))
+      away_ranks_pre <- integer(nrow(results))
+      home_ranks_post <- integer(nrow(results))
+      away_ranks_post <- integer(nrow(results))
+      
+      for (i in seq_len(nrow(results))) {
+        match <- results[i, ]
+        
+        # PRE-MATCH STANDINGS
+        if (nrow(league_table) > 0) {
+          standings_pre <- league_table |>
+            arrange(desc(Points), desc(GD), desc(GoalsFor)) |>
+            mutate(Rank = row_number())
+          
+          home_rank <- standings_pre |> filter(Team == match$HomeTeam) |> pull(Rank)
+          away_rank <- standings_pre |> filter(Team == match$AwayTeam) |> pull(Rank)
+          
+          home_ranks_pre[i] <- ifelse(length(home_rank) == 0, NA_integer_, home_rank)
+          away_ranks_pre[i] <- ifelse(length(away_rank) == 0, NA_integer_, away_rank)
+        } else {
+          home_ranks_pre[i] <- NA_integer_
+          away_ranks_pre[i] <- NA_integer_
+        }
+        
+        # UPDATE league_table
+        home_team <- match$HomeTeam
+        away_team <- match$AwayTeam
+        FTHG <- match$FTHG
+        FTAG <- match$FTAG
+        
+        home_points <- if (FTHG > FTAG) 3 else if (FTHG == FTAG) 1 else 0
+        away_points <- if (FTAG > FTHG) 3 else if (FTHG == FTAG) 1 else 0
+        
+        update_team <- function(tbl, team, points, gf, ga) {
+          existing <- tbl |> filter(Team == team)
+          if (nrow(existing) == 0) {
+            bind_rows(tbl, tibble(Team = team, Points = points, GD = gf - ga, GoalsFor = gf, Played = 1))
+          } else {
+            tbl |> mutate(
+              Points = if_else(Team == team, Points + points, Points),
+              GD = if_else(Team == team, GD + (gf - ga), GD),
+              GoalsFor = if_else(Team == team, GoalsFor + gf, GoalsFor),
+              Played = if_else(Team == team, Played + 1, Played)
+            )
+          }
+        }
+        
+        league_table <- update_team(league_table, home_team, home_points, FTHG, FTAG)
+        league_table <- update_team(league_table, away_team, away_points, FTAG, FTHG)
+        
+        # POST-MATCH STANDINGS
+        standings_post <- league_table |>
+          arrange(desc(Points), desc(GD), desc(GoalsFor)) |>
+          mutate(Rank = row_number())
+        
+        home_rank_post <- standings_post |> filter(Team == home_team) |> pull(Rank)
+        away_rank_post <- standings_post |> filter(Team == away_team) |> pull(Rank)
+        
+        home_ranks_post[i] <- ifelse(length(home_rank_post) == 0, NA_integer_, home_rank_post)
+        away_ranks_post[i] <- ifelse(length(away_rank_post) == 0, NA_integer_, away_rank_post)
+      }
+      
+      # Add ranks to results
+      results |> mutate(
+        Draw_1_No_Draw_0 = case_when(FTR == "D" ~ 1, TRUE ~ 0),
+        HomeRank_Pre = home_ranks_pre,
+        AwayRank_Pre = away_ranks_pre,
+        HomeRank_Post = home_ranks_post,
+        AwayRank_Post = away_ranks_post,
+        Distance_Teams_Pre = sqrt((HomeRank_Pre - AwayRank_Pre)^2),
+        Distance_Teams_Higher_Lower_Pre = case_when(
+          HomeRank_Pre - AwayRank_Pre < 0 ~ "Home Higher",
+          HomeRank_Pre - AwayRank_Pre > 0 ~ "Away Higher",
+          TRUE ~ NA
+        ),
+        CategoriesRankHome_Pre = case_when(
+          HomeRank_Pre <= 3 ~ "Top3",
+          HomeRank_Pre >= 16 ~ "Bottom3",
+          HomeRank_Pre >= 4 & HomeRank_Pre <= 9 ~ "Middle4to9",
+          HomeRank_Pre >= 10 & HomeRank_Pre <= 15 ~ "Middle10to15",
+          TRUE ~ NA
+        ),
+        CategoriesRankAway_Pre = case_when(
+          AwayRank_Pre <= 3 ~ "Top3",
+          AwayRank_Pre >= 16 ~ "Bottom3",
+          AwayRank_Pre >= 4 & AwayRank_Pre <= 9 ~ "Middle4to9",
+          AwayRank_Pre >= 10 & AwayRank_Pre <= 15 ~ "Middle10to15",
+          TRUE ~ NA
+        )
+      )
+    }) |>
+    ungroup() |>
+    arrange(GameID) |>
+    select(-GameID)
+}
+
+F14_snapshot_ranking <- function(df) {
+  # Step 1: Select relevant columns
+  init_snapshot <- df %>% 
+    select(1, 122:124, 3, 5:9, 46:48)
+
+  # Step 2: Convert to long format
+  long_results_all <- bind_rows(
+    init_snapshot %>%
+      transmute(
+        UID, round, Date,
+        Team = HomeTeam,
+        Opponent = AwayTeam,
+        Goals_For_Round = FTHG,
+        Goals_Against_Round = FTAG,
+        Points_Round = case_when(
+          FTR == "H" ~ 3,
+          FTR == "D" ~ 1,
+          TRUE ~ 0
+        )
+      ),
+    init_snapshot %>%
+      transmute(
+        UID, round, Date,
+        Team = AwayTeam,
+        Opponent = HomeTeam,
+        Goals_For_Round = FTAG,
+        Goals_Against_Round = FTHG,
+        Points_Round = case_when(
+          FTR == "A" ~ 3,
+          FTR == "D" ~ 1,
+          TRUE ~ 0
+        )
+      )
+  )
+
+  # Step 3: Compute cumulative stats
+  long_results_with_totals <- long_results_all %>%
+    arrange(Team, round, Date) %>%
+    group_by(Team) %>%
+    mutate(
+      Match_Number = row_number(),
+      Goals_For_Total = cumsum(Goals_For_Round),
+      Goals_Against_Total = cumsum(Goals_Against_Round),
+      Goals_Balance_Round = Goals_For_Round - Goals_Against_Round,
+      Goals_Balance_Total = cumsum(Goals_Balance_Round),
+      Points_Total = cumsum(Points_Round)
+    ) %>%
+    ungroup()
+
+  # Step 4: Snapshot function
+snapshot_after_round <- function(r) {
+  long_results_with_totals %>%
+    filter(round <= r) %>%
+    group_by(Team) %>%
+    summarise(
+      UID = first(UID),  # or use `unique(UID)` if there might be multiple
+      Matches = n(),
+      Points_Round = sum(Points_Round[round == r]),
+      Points_Total = max(Points_Total),
+      Goals_For_Total = max(Goals_For_Total),
+      Goals_Against_Total = max(Goals_Against_Total),
+      Goals_For_Round = sum(Goals_For_Round[round == r]),
+      Goals_Against_Round = sum(Goals_Against_Round[round == r]),
+      Goals_Balance_Total = round(Goals_For_Total - Goals_Against_Total),
+      Avg_Goals_For = round(Goals_For_Total / Matches, 2),
+      Avg_Goals_Against = round(Goals_Against_Total / Matches, 2),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(Points_Total), desc(Goals_Balance_Total), desc(Goals_For_Total)) %>%
+    mutate(
+      League_Ranking = row_number(),
+      Round = r
+    ) %>%
+    select(
+      UID, Round, Team, League_Ranking, Matches,
+      Points_Round, Points_Total,
+      Goals_For_Round, Goals_For_Total,
+      Goals_Against_Round, Goals_Against_Total,
+      Goals_Balance_Total,
+      Avg_Goals_For, Avg_Goals_Against
+    )
+}
+
+  # Step 5: Build full snapshot across all rounds
+  all_snapshots <- map_dfr(1:34, snapshot_after_round)
+
+  # Step 6: Return both data frames as a named list
+  list(
+    long_results_with_totals = long_results_with_totals,
+    all_snapshots = all_snapshots
+  )
 }
